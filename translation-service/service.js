@@ -1,5 +1,9 @@
-/// <reference path="./global.d.ts" />
+// / <reference path="./global.d.ts" />
 
+// import { reject, resolve } from "core-js/fn/promise";
+// import { error } from "node:console";
+// import { callbackify } from "node:util";
+import { NotAvailable } from './errors.js';
 // import { values } from "core-js/core/array";
 
 // import { values } from "core-js/core/array";
@@ -56,7 +60,7 @@ export class TranslationService {
     }
     const arr = [];
     for(const text of texts){
-      let promise = free(text);
+      let promise = this.free(text);
       arr.push(promise);
     }
     return Promise.all(arr);
@@ -72,7 +76,26 @@ export class TranslationService {
    * @returns {Promise<void>}
    */
   request(text) {
-    throw new Error('Implement the request function');
+    return new Promise((resolve, reject)=>{
+      let attempts = 0;
+
+      const tryRequest =()=> {
+        attempts++;
+
+        this.api.request(text, (error)=>{
+          if(error === undefined){
+            resolve(undefined);
+          }
+          else if (attempts < 3){
+            tryRequest();
+          }
+          else{
+            reject(error);
+          }
+        });
+      }
+      tryRequest();
+    });
   }
 
   /**
@@ -85,31 +108,34 @@ export class TranslationService {
    * @param {number} minimumQuality
    * @returns {Promise<string>}
    */
-  premium(text, minimumQuality) {
-    throw new Error('Implement the premium function');
-  }
+premium(text, minimumQuality) {
+  return this.api.fetch(text)
+    .then((result) => {
+      if (result.quality >= minimumQuality) {
+        return result.translation;
+      }
+
+      throw new QualityThresholdNotMet(text);
+    })
+    .catch((error) => {
+      if (!(error instanceof NotAvailable)) {
+        throw error;
+      }
+
+      return this.request(text)
+        .then(() => this.api.fetch(text))
+        .then((result) => {
+          if (result.quality >= minimumQuality) {
+            return result.translation;
+          }
+
+          throw new QualityThresholdNotMet(text);
+        });
+    });
+}
 }
 
-/**
- * This error is used to indicate a translation was found, but its quality does
- * not meet a certain threshold. Do not change the name of this error.
- */
-export class QualityThresholdNotMet extends Error {
-  /**
-   * @param {string} text
-   */
-  constructor(text) {
-    super(
-      `
-The translation of ${text} does not meet the requested quality threshold.
-    `.trim(),
-    );
-
-    this.text = text;
-  }
-}
-
-/**
+/** 
  * This error is used to indicate the batch service was called without any
  * texts to translate (it was empty). Do not change the name of this error.
  */
@@ -120,5 +146,16 @@ export class BatchIsEmpty extends Error {
 Requested a batch translation, but there are no texts in the batch.
     `.trim(),
     );
+  }
+}
+
+export class QualityThresholdNotMet extends Error {
+  constructor(text) {
+    super(
+      `
+The translation of ${text} does not meet the requested quality threshold.
+    `.trim(),
+    );
+    this.text = text;
   }
 }
